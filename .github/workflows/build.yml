@@ -1,0 +1,92 @@
+name: Build and release a duckdb Pyodide wheel
+
+on:
+  workflow_dispatch:
+    inputs:
+      duckdb_version:
+        description: "git tag in duckdb/duckdb-python to build, e.g. v1.5.4"
+        required: true
+      xbuildenv_url:
+        description: "Pyodide cross-build environment tarball URL"
+        required: true
+      platform_tag:
+        description: "DuckDB platform tag baked into the binary, e.g. wasm_eh_pyodide"
+        required: true
+      python_version:
+        description: "CPython version to build against, e.g. 3.14"
+        required: true
+      pyodide_npm_version:
+        description: "pyodide npm package version to smoke-test against, e.g. 314.0.3"
+        required: true
+      release_tag:
+        description: "Tag for the resulting GitHub Release, e.g. duckdb-v1.5.4-pyodide-314.0.3"
+        required: true
+
+jobs:
+  build:
+    name: Build duckdb ${{ inputs.duckdb_version }} for Pyodide (py${{ inputs.python_version }})
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python_version }}
+          allow-prereleases: true
+
+      - name: Install pyodide-build
+        run: pip install pyodide-build
+
+      - name: Get matching Emscripten version
+        id: emscripten
+        run: |
+          version=$(pyodide config get emscripten_version)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Emscripten version: ${version}"
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ steps.emscripten.outputs.version }}
+
+      - name: Build wheel
+        run: |
+          python3 scripts/build.py \
+            --duckdb-version "${{ inputs.duckdb_version }}" \
+            --xbuildenv-url "${{ inputs.xbuildenv_url }}" \
+            --platform-tag "${{ inputs.platform_tag }}"
+
+      - name: Show wheel
+        run: ls -lah dist/*.whl
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install matching pyodide npm package
+        run: npm install "pyodide@${{ inputs.pyodide_npm_version }}"
+
+      - name: Smoke test (required to pass)
+        run: |
+          wheel=$(ls dist/*.whl | head -1)
+          # duckdb.__version__ has no "v" prefix even though the git tag does.
+          expected_version="${DUCKDB_VERSION#v}"
+          node test/smoke_test.mjs "$wheel" "$expected_version"
+        env:
+          DUCKDB_VERSION: ${{ inputs.duckdb_version }}
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: duckdb-${{ inputs.duckdb_version }}-pyodide-py${{ inputs.python_version }}
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${{ inputs.release_tag }}" \
+            --title "${{ inputs.release_tag }}" \
+            --notes "duckdb ${{ inputs.duckdb_version }} built for Pyodide (Python ${{ inputs.python_version }}, platform tag ${{ inputs.platform_tag }}), against xbuildenv ${{ inputs.xbuildenv_url }}." \
+            dist/*.whl

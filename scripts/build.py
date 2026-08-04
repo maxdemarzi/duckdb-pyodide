@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Build a `duckdb` wheel for Pyodide (wasm32-emscripten), pinned to an exact
+DuckDB version -- so it can match a downstream consumer's own DuckDB core pin
+exactly, rather than whatever version Pyodide happens to bundle.
+
+Why this exists: Pyodide's own bundled `duckdb` package tracks upstream
+duckdb-python releases on its own schedule, which will not generally match a
+specific downstream project's pinned DuckDB core version. DuckDB's extension
+binary format is version-locked -- a native extension built against one
+DuckDB core commit will not load into a different one, even a nearby patch
+version -- so a project that ships its own compiled DuckDB extension and
+wants it loadable inside Pyodide needs a `duckdb` Pyodide wheel built from
+the *exact* same core commit, which this script produces on demand.
+
+Usage:
+    python scripts/build.py --duckdb-version v1.5.4 \\
+        --xbuildenv-url https://github.com/pyodide/pyodide-build-environment-nightly/releases/download/<date>/xbuildenv-<date>.tar.bz2 \\
+        --platform-tag wasm_eh_pyodide
+
+Requires `pyodide-build` already installed (`pip install pyodide-build`) and
+a matching `emsdk` already activated on PATH (this script does not manage
+the Emscripten toolchain itself -- see the accompanying GitHub Actions
+workflow for how CI sets that up via `pyodide config get emscripten_version`
+before invoking this script).
+"""
+import argparse
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+CHECKOUT_DIR = REPO_ROOT / "build" / "duckdb-python"
+
+
+def run(cmd, **kwargs):
+    print("+", " ".join(cmd))
+    subprocess.run(cmd, check=True, **kwargs)
+
+
+def checkout_duckdb_python(duckdb_version: str) -> pathlib.Path:
+    if CHECKOUT_DIR.exists():
+        shutil.rmtree(CHECKOUT_DIR)
+    CHECKOUT_DIR.parent.mkdir(parents=True, exist_ok=True)
+    run([
+        "git", "clone",
+        "--recurse-submodules", "--shallow-submodules",
+        "https://github.com/duckdb/duckdb-python.git",
+        str(CHECKOUT_DIR),
+    ])
+    run(["git", "-C", str(CHECKOUT_DIR), "checkout", duckdb_version])
+    run(["git", "-C", str(CHECKOUT_DIR), "submodule", "update", "--init", "--recursive"])
+    return CHECKOUT_DIR
+
+
+def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str) -> pathlib.Path:
+    checkout = checkout_duckdb_python(duckdb_version)
+
+    run([sys.executable, str(pathlib.Path(__file__).parent / "patch_cmake.py")], cwd=checkout)
+
+    env = os.environ.copy()
+    env.update({
+        # DUCKDB_CUSTOM_PLATFORM (env) only affects the wheel filename tag.
+        # DUCKDB_EXPLICIT_PLATFORM (via CMAKE_ARGS) bakes the platform string
+        # into the compiled binary itself -- what `PRAGMA platform` returns
+        # at runtime, and what a loading extension's own platform tag is
+        # checked against. Both need to agree with the consuming project's
+        # own extension platform tag, or extension loading fails even with a
+        # matching DuckDB core version.
+        "DUCKDB_CUSTOM_PLATFORM": platform_tag,
+        "CMAKE_ARGS": f"-DDUCKDB_EXPLICIT_PLATFORM={platform_tag}",
+        "CFLAGS": "-fwasm-exceptions",
+        "LDFLAGS": "-fwasm-exceptions",
+        "DEFAULT_CROSS_BUILD_ENV_URL": xbuildenv_url,
+        # patch_cmake.py's edit (when it makes one) dirties the working tree,
+        # which defeats setuptools_scm's normal tag-based version detection
+        # (distance=0 + dirty -> can't determine a clean version). Override
+        # it directly with the tag we actually checked out.
+        "OVERRIDE_GIT_DESCRIBE": duckdb_version,
+    })
+
+    run(["pyodide", "build", "--exports=whole_archive"], cwd=checkout, env=env)
+
+    wheels = sorted((checkout / "dist").glob("*.whl"))
+    if not wheels:
+        sys.exit(f"ERROR: no wheel produced in {checkout / 'dist'}")
+    if len(wheels) > 1:
+        sys.exit(f"ERROR: expected exactly one wheel, found {len(wheels)}: {wheels}")
+    return wheels[0]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--duckdb-version", required=True, help="git tag in duckdb/duckdb-python, e.g. v1.5.4")
+    parser.add_argument("--xbuildenv-url", required=True, help="Pyodide cross-build environment tarball URL")
+    parser.add_argument("--platform-tag", required=True, help="DuckDB platform tag, e.g. wasm_eh_pyodide")
+    parser.add_argument("--output-dir", type=pathlib.Path, default=REPO_ROOT / "dist")
+    args = parser.parse_args()
+
+    wheel = build(args.duckdb_version, args.xbuildenv_url, args.platform_tag)
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    dest = args.output_dir / wheel.name
+    shutil.copyfile(wheel, dest)
+    print(f"Wheel ready: {dest}")
+
+
+if __name__ == "__main__":
+    main()

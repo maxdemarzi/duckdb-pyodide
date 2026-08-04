@@ -1,0 +1,6 @@
+{
+  "name": "duckdb-pyodide-smoke-test",
+  "private": true,
+  "type": "module",
+  "comment": "No pinned `pyodide` dependency on purpose -- CI installs the exact npm version matching whichever xbuildenv/Python target was just built (`npm install pyodide@<version>`) right before running the smoke test, since this repo isn't tied to one Pyodide version."
+}
