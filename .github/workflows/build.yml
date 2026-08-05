@@ -12,30 +12,84 @@ on:
       platform_tag:
         description: "DuckDB platform tag baked into the binary, e.g. wasm_eh_pyodide"
         required: true
-      python_version:
-        description: "CPython version to build against, e.g. 3.14"
-        required: true
       pyodide_npm_version:
-        description: "pyodide npm package version to smoke-test against, e.g. 314.0.3"
+        description: "pyodide npm package version to build and smoke-test against, e.g. 314.0.3"
         required: true
+      pyodide_build_version:
+        description: "pin pyodide-build, e.g. 0.25.1 (leave blank for latest; older xbuildenvs declare a max_pyodide_build_version)"
+        required: false
+        default: ""
       release_tag:
         description: "Tag for the resulting GitHub Release, e.g. duckdb-v1.5.4-pyodide-314.0.3"
         required: true
 
 jobs:
   build:
-    name: Build duckdb ${{ inputs.duckdb_version }} for Pyodide (py${{ inputs.python_version }})
+    name: Build duckdb ${{ inputs.duckdb_version }} for Pyodide ${{ inputs.pyodide_npm_version }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
+      # Pyodide ships exactly one CPython per release, so the Python version is
+      # a function of the Pyodide version rather than an independent choice.
+      # Deriving it here instead of taking it as a second dispatch input means
+      # the pair can't be set inconsistently in the first place.
+      #
+      # Since the 314.x scheme Pyodide encodes CPython in its own major version
+      # (314 -> 3.14, 315 -> 3.15). The older 0.x line does not, so those are
+      # mapped explicitly; verified against each release's pyodide-lock.json.
+      #
+      # The same split decides the wheel's platform tag. pyodide-build >= 0.34.1
+      # names wheels `pyemscripten_<abi>_wasm32` (PEP 783), but the micropip
+      # bundled in the 0.x line only accepts `pyodide_<abi>_wasm32` and
+      # `emscripten_<emsdk>_wasm32` -- installing a pyemscripten-tagged wheel
+      # there fails with "built with Emscripten vpyemscripten.<abi>". Verified
+      # against pyodide 0.28.3's own micropip 0.10.1 tag list. USE_LEGACY_PLATFORM
+      # is pyodide-build's supported switch back to the `pyodide_` name.
+      - name: Derive build settings from Pyodide version
+        id: python
+        env:
+          PYODIDE_NPM_VERSION: ${{ inputs.pyodide_npm_version }}
+        run: |
+          major="${PYODIDE_NPM_VERSION%%.*}"
+          rest="${PYODIDE_NPM_VERSION#*.}"
+          minor="${rest%%.*}"
+          if [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 300 )); then
+            version="$(( major / 100 )).$(( major % 100 ))"
+            legacy_platform=0
+          elif [[ "$major" == "0" ]]; then
+            legacy_platform=1
+            case "$minor" in
+              25)    version=3.11 ;;
+              26|27) version=3.12 ;;
+              28)    version=3.13 ;;
+              *)
+                echo "::error::Unknown legacy pyodide version '${PYODIDE_NPM_VERSION}'. Add its CPython mapping to this step (see that release's pyodide-lock.json '.info.python')."
+                exit 1 ;;
+            esac
+          else
+            echo "::error::Cannot parse pyodide npm version '${PYODIDE_NPM_VERSION}'."
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "legacy_platform=${legacy_platform}" >> "$GITHUB_OUTPUT"
+          echo "Pyodide ${PYODIDE_NPM_VERSION} -> CPython ${version}, USE_LEGACY_PLATFORM=${legacy_platform}"
+
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ inputs.python_version }}
+          python-version: ${{ steps.python.outputs.version }}
           allow-prereleases: true
 
       - name: Install pyodide-build
-        run: pip install pyodide-build
+        env:
+          PYODIDE_BUILD_VERSION: ${{ inputs.pyodide_build_version }}
+        run: |
+          if [[ -n "$PYODIDE_BUILD_VERSION" ]]; then
+            pip install "pyodide-build==${PYODIDE_BUILD_VERSION}"
+          else
+            pip install pyodide-build
+          fi
+          pip show pyodide-build | grep -i '^version:'
 
       - name: Get matching Emscripten version
         id: emscripten
@@ -49,6 +103,8 @@ jobs:
           version: ${{ steps.emscripten.outputs.version }}
 
       - name: Build wheel
+        env:
+          USE_LEGACY_PLATFORM: ${{ steps.python.outputs.legacy_platform }}
         run: |
           python3 scripts/build.py \
             --duckdb-version "${{ inputs.duckdb_version }}" \
@@ -76,7 +132,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: duckdb-${{ inputs.duckdb_version }}-pyodide-py${{ inputs.python_version }}
+          name: duckdb-${{ inputs.duckdb_version }}-pyodide-py${{ steps.python.outputs.version }}
           path: dist/*.whl
           if-no-files-found: error
           retention-days: 90
@@ -88,5 +144,5 @@ jobs:
         run: |
           gh release create "${{ inputs.release_tag }}" \
             --title "${{ inputs.release_tag }}" \
-            --notes "duckdb ${{ inputs.duckdb_version }} built for Pyodide (Python ${{ inputs.python_version }}, platform tag ${{ inputs.platform_tag }}), against xbuildenv ${{ inputs.xbuildenv_url }}." \
+            --notes "duckdb ${{ inputs.duckdb_version }} built for Pyodide ${{ inputs.pyodide_npm_version }} (Python ${{ steps.python.outputs.version }}, platform tag ${{ inputs.platform_tag }}), against xbuildenv ${{ inputs.xbuildenv_url }}." \
             dist/*.whl
