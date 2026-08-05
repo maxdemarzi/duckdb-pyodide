@@ -91,10 +91,22 @@ jobs:
           fi
           pip show pyodide-build | grep -i '^version:'
 
-      - name: Get matching Emscripten version
+      # Install the requested cross-build environment up front. Until this runs,
+      # `pyodide config get` reports pyodide-build's *default* environment, so
+      # deriving the Emscripten version before this point pinned emsdk to
+      # whatever that default happened to be rather than to the xbuildenv the
+      # wheel is actually built against -- they agreed only by coincidence.
+      - name: Install cross-build environment
+        run: pyodide xbuildenv install --url "${{ inputs.xbuildenv_url }}"
+
+      # The xbuildenv and the target Pyodide version are independent inputs and
+      # nothing forces them to agree; a mismatch builds a wheel the runtime then
+      # refuses to install. Check before spending ~12 minutes compiling DuckDB.
+      - name: Check cross-build environment matches target Pyodide
         id: emscripten
         run: |
-          version=$(pyodide config get emscripten_version)
+          version=$(python3 scripts/check_xbuildenv.py \
+            --pyodide-npm-version "${{ inputs.pyodide_npm_version }}")
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Emscripten version: ${version}"
 
