@@ -48,6 +48,40 @@ index lags well behind Pyodide's actual releases (as of this writing, stuck on P
 published separately at
 [pyodide/pyodide-build-environment-nightly](https://github.com/pyodide/pyodide-build-environment-nightly/releases).
 
+## Supported targets
+
+| Pyodide  | CPython | Emscripten | Wheel platform tag          |
+| -------- | ------- | ---------- | --------------------------- |
+| `0.28.x` | 3.13    | 4.0.9      | `pyodide_2025_0_wasm32`     |
+| `314.x`  | 3.14    | 5.0.3      | `pyemscripten_2026_0_wasm32` |
+
+The Python version is not an independent choice -- Pyodide ships exactly one CPython
+per release, so the target Pyodide version determines it, and `build.yml` derives it
+rather than taking it as a second input that could disagree. The platform tag scheme
+follows the same split: `pyodide-build` >= 0.34.1 names wheels
+`pyemscripten_<abi>_wasm32` (PEP 783), but the `micropip` bundled in the 0.x line
+accepts only `pyodide_<abi>_wasm32` and `emscripten_<emsdk>_wasm32`, so those builds
+set `USE_LEGACY_PLATFORM`. Getting this wrong builds a perfectly good wheel that the
+target runtime then refuses to install, so `scripts/check_xbuildenv.py` compares the
+cross-build environment against the target release's own `pyodide-lock.json` before
+committing to a ~12 minute compile.
+
+**Pyodide 0.28 / CPython 3.13 is the floor**, and it is set by the age of the Emscripten
+toolchain rather than by CPython's support calendar (3.12 is supported upstream until
+October 2028):
+
+- **CPython 3.12** (Pyodide `0.27.x`, Emscripten 3.1.58) fails at CMake generate with
+  `Feature 'WHOLE_ARCHIVE' ... is not supported for the 'CXX' link language`. That is
+  `pyodide build --exports=whole_archive` -- the mechanism handling symbol export for
+  this build (see below). The other `--exports` modes would not export what a loading
+  extension's `dlopen()` needs, so there is no useful way around it.
+- **CPython 3.11** (Pyodide `0.25.1`, Emscripten 3.1.46) pins `pyodide-build` to exactly
+  `0.25.1`, which imports `wheel.cli` -- made private in `wheel` 0.46.0 -- and so fails
+  before compiling anything.
+
+Neither is a DuckDB limitation; both are the 2024-era toolchains those Pyodide releases
+require.
+
 ## What gets patched, and why
 
 `scripts/patch_cmake.py` -- duckdb-python's own `CMakeLists.txt` links two GNU-ld-specific
