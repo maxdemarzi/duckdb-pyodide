@@ -72,7 +72,24 @@ def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str,
         "DUCKDB_CUSTOM_PLATFORM": platform_tag,
         "CMAKE_ARGS": f"-DDUCKDB_EXPLICIT_PLATFORM={platform_tag}",
         "CFLAGS": "-fwasm-exceptions",
-        "LDFLAGS": "-fwasm-exceptions",
+        # --allow-multiple-definition: DuckDB embeds every third-party object
+        # library (zstd, yyjson, fsst, re2, miniz, utf8proc, hyperloglog,
+        # fastpforlib, skiplistlib, mbedtls, fmt) INTO libduckdb_static.a via
+        # $<TARGET_OBJECTS:...> (duckdb/src/CMakeLists.txt's DUCKDB_LINK_LIBS),
+        # while each ALSO remains its own installed archive that lands on the
+        # link line. A normal link takes one copy; `pyodide build
+        # --exports=whole_archive` force-includes every archive, so each of
+        # those objects is pulled in twice and wasm-ld fails:
+        #
+        #   duplicate symbol: duckdb_zstd::ZSTD_fillHashTable(...)
+        #   >>> defined in duckdb/src/libduckdb_static.a(zstd_fast.cpp.o)
+        #   >>> defined in duckdb/third_party/zstd/libduckdb_zstd.a(zstd_fast.cpp.o)
+        #
+        # The two definitions are the SAME object file compiled once, so
+        # taking the first is not a choice between rival implementations.
+        # Stripping the redundant archives instead would mean patching ~11 of
+        # them and re-patching whenever that list changes upstream.
+        "LDFLAGS": "-fwasm-exceptions -Wl,--allow-multiple-definition",
         "DEFAULT_CROSS_BUILD_ENV_URL": xbuildenv_url,
         # patch_cmake.py's edit (when it makes one) dirties the working tree,
         # which defeats setuptools_scm's normal tag-based version detection
