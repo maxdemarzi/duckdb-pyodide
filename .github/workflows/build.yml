@@ -151,9 +151,16 @@ jobs:
       - name: Show wheel
         run: ls -lah dist/*.whl
 
+      # Node 24 (V8 13.6), not 22 (V8 12.4): the smoke test instantiates the
+      # wheel's wasm module, and V8 raised kV8MaxWasmExports from 100,000 to
+      # 1,000,000 only in 13.3 (Chrome 133, Feb 2025). A whole-archive DuckDB
+      # 2.0 build exports ~110k symbols, so on Node 22 it fails to load with
+      # "exports count of 109759 exceeds internal limit of 100000" even though
+      # every browser since Chrome 133 accepts it. The old limit was the test
+      # environment's, not the wheel's.
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install matching pyodide npm package
         run: npm install "pyodide@${{ inputs.pyodide_npm_version }}"
