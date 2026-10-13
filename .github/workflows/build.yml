@@ -28,6 +28,10 @@ on:
         required: false
         type: boolean
         default: false
+      version_override:
+        description: "Version to build as (vX.Y.Z[-suffix]). REQUIRED when duckdb_version is a branch -- duckdb-python rejects a non-conforming OVERRIDE_GIT_DESCRIBE."
+        required: false
+        default: ""
       expected_wheel_version:
         description: "Version the built wheel must report (default: duckdb_version without its leading v). Use * to skip the check when building from a branch."
         required: false
@@ -141,7 +145,8 @@ jobs:
           python3 scripts/build.py \
             --duckdb-version "${{ inputs.duckdb_version }}" \
             --xbuildenv-url "${{ inputs.xbuildenv_url }}" \
-            --platform-tag "${{ inputs.platform_tag }}"
+            --platform-tag "${{ inputs.platform_tag }}" \
+            --version-override "${{ inputs.version_override }}"
 
       - name: Show wheel
         run: ls -lah dist/*.whl

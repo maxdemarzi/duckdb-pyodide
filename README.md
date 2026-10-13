@@ -45,9 +45,13 @@ published** -- for validating the recipe against a new DuckDB line before its
 release exists. `release_tag` is then unnecessary (a publishing run without one
 fails immediately rather than after the build).
 
-Building from a *branch* rather than a tag, the wheel's own version string is
-not derivable from the ref, so pass `expected_wheel_version: *` to skip the
-exact-version assertion. The smoke test still requires the wheel to install,
+Building from a *branch* rather than a tag needs two extra inputs.
+duckdb-python validates the version it is handed (`Invalid
+OVERRIDE_GIT_DESCRIBE ... expected vX.Y.Z`), and a branch name is not that, so
+pass `version_override` (e.g. `v2.0.0-dev`) to build under a conforming
+version. The wheel then reports that version rather than anything derivable
+from the ref, so pass `expected_wheel_version: *` to skip the exact-version
+assertion. The smoke test still requires the wheel to install,
 import and answer a query under Pyodide.
 
 Produces a wheel in `dist/`. `--platform-tag` is baked into the compiled binary itself

@@ -54,7 +54,8 @@ def checkout_duckdb_python(duckdb_version: str) -> pathlib.Path:
     return CHECKOUT_DIR
 
 
-def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str) -> pathlib.Path:
+def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str,
+          version_override: str = "") -> pathlib.Path:
     checkout = checkout_duckdb_python(duckdb_version)
 
     run([sys.executable, str(pathlib.Path(__file__).parent / "patch_cmake.py")], cwd=checkout)
@@ -77,7 +78,13 @@ def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str) -> pathlib
         # which defeats setuptools_scm's normal tag-based version detection
         # (distance=0 + dirty -> can't determine a clean version). Override
         # it directly with the tag we actually checked out.
-        "OVERRIDE_GIT_DESCRIBE": duckdb_version,
+        #
+        # duckdb-python validates this strictly: "Invalid OVERRIDE_GIT_DESCRIBE
+        # ... (expected vX.Y.Z with an optional -postN or pre-release suffix)".
+        # A tag satisfies that; a BRANCH ref (used to trial-build a line before
+        # it is tagged, e.g. v2.0-cyanoptera) does not, so --version-override
+        # supplies a conforming string in that case.
+        "OVERRIDE_GIT_DESCRIBE": version_override or duckdb_version,
     })
 
     run(["pyodide", "build", "--exports=whole_archive"], cwd=checkout, env=env)
@@ -95,10 +102,14 @@ def main() -> None:
     parser.add_argument("--duckdb-version", required=True, help="git tag in duckdb/duckdb-python, e.g. v1.5.4")
     parser.add_argument("--xbuildenv-url", required=True, help="Pyodide cross-build environment tarball URL")
     parser.add_argument("--platform-tag", required=True, help="DuckDB platform tag, e.g. wasm_eh_pyodide")
+    parser.add_argument("--version-override", default="",
+                        help="Version string to build as (vX.Y.Z[-suffix]). Required when --duckdb-version\n"
+                             "is a BRANCH rather than a tag: duckdb-python rejects a non-conforming\n"
+                             "OVERRIDE_GIT_DESCRIBE outright.")
     parser.add_argument("--output-dir", type=pathlib.Path, default=REPO_ROOT / "dist")
     args = parser.parse_args()
 
-    wheel = build(args.duckdb_version, args.xbuildenv_url, args.platform_tag)
+    wheel = build(args.duckdb_version, args.xbuildenv_url, args.platform_tag, args.version_override)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     dest = args.output_dir / wheel.name
