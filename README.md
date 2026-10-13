@@ -37,6 +37,19 @@ python scripts/build.py \
   --platform-tag wasm_eh_pyodide
 ```
 
+### Trial builds (`dry_run`)
+
+`build.yml` takes a `dry_run` input. With it set, the wheel is built,
+smoke-tested and uploaded as a workflow artifact, but **no GitHub release is
+published** -- for validating the recipe against a new DuckDB line before its
+release exists. `release_tag` is then unnecessary (a publishing run without one
+fails immediately rather than after the build).
+
+Building from a *branch* rather than a tag, the wheel's own version string is
+not derivable from the ref, so pass `expected_wheel_version: *` to skip the
+exact-version assertion. The smoke test still requires the wheel to install,
+import and answer a query under Pyodide.
+
 Produces a wheel in `dist/`. `--platform-tag` is baked into the compiled binary itself
 (what `PRAGMA platform` returns at runtime) -- it needs to match whatever platform tag
 your own DuckDB extension was built with, or extension loading will fail even with a

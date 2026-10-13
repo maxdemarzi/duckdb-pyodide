@@ -4,6 +4,11 @@
 // query end to end.
 //
 // Usage: node test/smoke_test.mjs <path-or-url-to-wheel> <expected-version>
+//
+// <expected-version> may be "*" to skip the exact-version assertion while still
+// requiring the wheel to install, import and answer a query. That is for building
+// from a BRANCH (e.g. a pre-release line), where the wheel's own version string is
+// not derivable from the ref. A release build always passes a real version.
 import { loadPyodide } from "pyodide";
 import fs from "fs";
 
@@ -31,7 +36,7 @@ import micropip
 await micropip.install("${installTarget}")
 
 import duckdb
-assert duckdb.__version__ == "${expectedVersion}", f"expected duckdb {${JSON.stringify(expectedVersion)}!r}, got {duckdb.__version__!r}"
+${expectedVersion === "*" ? "print(f\"version assertion skipped (expected-version '*'), wheel reports {duckdb.__version__!r}\")" : `assert duckdb.__version__ == "${expectedVersion}", f"expected duckdb {${JSON.stringify(expectedVersion)}!r}, got {duckdb.__version__!r}"`}
 
 con = duckdb.connect()
 rows = con.execute("SELECT 1 + 1 AS two").fetchall()

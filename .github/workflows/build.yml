@@ -20,14 +20,34 @@ on:
         required: false
         default: ""
       release_tag:
-        description: "Tag for the resulting GitHub Release, e.g. duckdb-v1.5.4-pyodide-314.0.3"
-        required: true
+        description: "Tag for the resulting GitHub Release, e.g. duckdb-v1.5.4-pyodide-314.0.3 (ignored when dry_run)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Build and smoke-test only -- publish NO GitHub release. The wheel is still uploaded as a workflow artifact."
+        required: false
+        type: boolean
+        default: false
+      expected_wheel_version:
+        description: "Version the built wheel must report (default: duckdb_version without its leading v). Use * to skip the check when building from a branch."
+        required: false
+        default: ""
 
 jobs:
   build:
     name: Build duckdb ${{ inputs.duckdb_version }} for Pyodide ${{ inputs.pyodide_npm_version }}
     runs-on: ubuntu-24.04
     steps:
+      - name: Validate inputs
+        run: |
+          if [ "${{ inputs.dry_run }}" != "true" ] && [ -z "${{ inputs.release_tag }}" ]; then
+            echo "::error::release_tag is required unless dry_run is set. Refusing now rather than after the build."
+            exit 1
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "DRY RUN: the wheel will be built, smoke-tested and uploaded as an artifact, but no release will be published."
+          fi
+
       - uses: actions/checkout@v6
 
       # Pyodide ships exactly one CPython per release, so the Python version is
@@ -137,10 +157,11 @@ jobs:
         run: |
           wheel=$(ls dist/*.whl | head -1)
           # duckdb.__version__ has no "v" prefix even though the git tag does.
-          expected_version="${DUCKDB_VERSION#v}"
+          expected_version="${EXPECTED_WHEEL_VERSION:-${DUCKDB_VERSION#v}}"
           node test/smoke_test.mjs "$wheel" "$expected_version"
         env:
           DUCKDB_VERSION: ${{ inputs.duckdb_version }}
+          EXPECTED_WHEEL_VERSION: ${{ inputs.expected_wheel_version }}
 
       - uses: actions/upload-artifact@v6
         with:
@@ -150,6 +171,7 @@ jobs:
           retention-days: 90
 
       - name: Create GitHub release
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
