@@ -25,6 +25,42 @@ would apply to, and that needs a human to look, not an unnoticed pass-through.
 import pathlib
 import sys
 
+# duckdb-python links nanobind-static into `_duckdb` twice: once implicitly via
+# nanobind_add_module(), and again through the _duckdb_dependencies INTERFACE
+# target. A native link tolerates that -- the archive appears twice but each
+# member is pulled in once. `pyodide build --exports=whole_archive` force-
+# includes every archive on the link line, so the second mention duplicates
+# every nanobind symbol and wasm-ld fails outright:
+#
+#   wasm-ld: error: duplicate symbol:
+#       nanobind::detail::internals_inc_ref(nanobind::detail::nb_internals*)
+#
+# Dropping nanobind-static from the INTERFACE link (Emscripten only) leaves
+# nanobind_add_module as its single linker mention. The object libraries that
+# consume _duckdb_dependencies only need its headers and compile definitions,
+# which are propagated explicitly instead -- see the comment above
+# nanobind_build_library in duckdb-python's own CMakeLists.txt.
+NANOBIND_DOUBLE_LINK = (
+    "target_link_libraries(_duckdb_dependencies INTERFACE nanobind-static\n"
+    "                                                     duckdb_target)"
+)
+
+NANOBIND_SINGLE_LINK = """if(EMSCRIPTEN)
+  # patched by duckdb-pyodide: link nanobind-static once (nanobind_add_module
+  # already does), but keep propagating its headers/definitions.
+  target_link_libraries(_duckdb_dependencies INTERFACE duckdb_target)
+  target_include_directories(
+    _duckdb_dependencies
+    INTERFACE $<TARGET_PROPERTY:nanobind-static,INTERFACE_INCLUDE_DIRECTORIES>)
+  target_compile_definitions(
+    _duckdb_dependencies
+    INTERFACE $<TARGET_PROPERTY:nanobind-static,INTERFACE_COMPILE_DEFINITIONS>)
+else()
+  target_link_libraries(_duckdb_dependencies INTERFACE nanobind-static
+                                                       duckdb_target)
+endif()"""
+
+
 GNU_LD_EXPORT_BLOCK = (
     "elseif(UNIX AND NOT APPLE)\n"
     "  target_link_options(\n"
@@ -40,7 +76,7 @@ EMSCRIPTEN_GUARD = (
 ) + GNU_LD_EXPORT_BLOCK
 
 
-def patch(cmake_path: pathlib.Path) -> None:
+def patch_gnu_ld_exports(cmake_path: pathlib.Path) -> None:
     original = cmake_path.read_text()
 
     if GNU_LD_EXPORT_BLOCK in original:
@@ -63,5 +99,29 @@ def patch(cmake_path: pathlib.Path) -> None:
     sys.exit(1)
 
 
+def patch_nanobind_double_link(cmake_path: pathlib.Path) -> None:
+    original = cmake_path.read_text()
+    if "patched by duckdb-pyodide" in original:
+        print(f"{cmake_path}: nanobind link already patched -- nothing to do.")
+        return
+    if NANOBIND_DOUBLE_LINK in original:
+        cmake_path.write_text(original.replace(NANOBIND_DOUBLE_LINK, NANOBIND_SINGLE_LINK, 1))
+        print(f"Patched {cmake_path}: link nanobind-static once under Emscripten "
+              "(nanobind_add_module already links it; --exports=whole_archive turns "
+              "the second mention into duplicate-symbol link errors).")
+        return
+    if "nanobind-static" not in original:
+        print(f"{cmake_path}: no nanobind-static link found -- nothing to patch.")
+        return
+    print(f"ERROR: {cmake_path} links nanobind-static in a shape this script "
+          "doesn't recognize -- refusing to guess, because leaving it unpatched "
+          "fails at link time with duplicate nanobind symbols. Relevant lines:")
+    for lineno, line in enumerate(original.splitlines(), start=1):
+        if "nanobind" in line:
+            print(f"  {lineno}: {line}")
+    sys.exit(1)
+
+
 if __name__ == "__main__":
-    patch(pathlib.Path("CMakeLists.txt"))
+    patch_gnu_ld_exports(pathlib.Path("CMakeLists.txt"))
+    patch_nanobind_double_link(pathlib.Path("CMakeLists.txt"))
