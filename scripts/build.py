@@ -103,9 +103,12 @@ def main() -> None:
     parser.add_argument("--xbuildenv-url", required=True, help="Pyodide cross-build environment tarball URL")
     parser.add_argument("--platform-tag", required=True, help="DuckDB platform tag, e.g. wasm_eh_pyodide")
     parser.add_argument("--version-override", default="",
-                        help="Version string to build as (vX.Y.Z[-suffix]). Required when --duckdb-version\n"
-                             "is a BRANCH rather than a tag: duckdb-python rejects a non-conforming\n"
-                             "OVERRIDE_GIT_DESCRIBE outright.")
+                        help="Version string to build as. Required when --duckdb-version is a BRANCH "
+                             "rather than a tag: duckdb-python rejects a non-conforming "
+                             "OVERRIDE_GIT_DESCRIBE outright. Its VERSION_RE "
+                             "(duckdb_packaging/_versioning.py) accepts vX.Y.Z optionally followed by "
+                             "alpha|beta|preview|pre|rc|a|b|c with an optional number, or -postN. "
+                             "'dev' is NOT accepted -- use e.g. v2.0.0-pre1.")
     parser.add_argument("--output-dir", type=pathlib.Path, default=REPO_ROOT / "dist")
     args = parser.parse_args()
 
