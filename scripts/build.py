@@ -108,7 +108,9 @@ def main() -> None:
                              "OVERRIDE_GIT_DESCRIBE outright. Its VERSION_RE "
                              "(duckdb_packaging/_versioning.py) accepts vX.Y.Z optionally followed by "
                              "alpha|beta|preview|pre|rc|a|b|c with an optional number, or -postN. "
-                             "'dev' is NOT accepted -- use e.g. v2.0.0-pre1.")
+                             "'dev' is NOT accepted. It must ALSO agree with the checkout's own "
+                             "pyproject.toml release_version, so for a branch this is normally just "
+                             "that version (e.g. v2.0.0 on v2.0-cyanoptera), not a pre-release suffix.")
     parser.add_argument("--output-dir", type=pathlib.Path, default=REPO_ROOT / "dist")
     args = parser.parse_args()
 

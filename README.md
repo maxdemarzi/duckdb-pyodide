@@ -50,7 +50,10 @@ duckdb-python validates the version it is handed (`Invalid
 OVERRIDE_GIT_DESCRIBE ... expected vX.Y.Z`), and a branch name is not that, so
 pass `version_override` to build under a conforming version. duckdb-python's
 `VERSION_RE` accepts `vX.Y.Z` plus `alpha|beta|preview|pre|rc|a|b|c` (optional
-number) or `-postN` -- **not** `dev` -- so e.g. `v2.0.0-pre1`. The wheel then reports that version rather than anything derivable
+number) or `-postN` -- **not** `dev` -- and it must ALSO equal the checkout's own `pyproject.toml`
+`release_version` (`OVERRIDE_GIT_DESCRIBE resolves to X, but pyproject.toml
+declares release_version = Y`). In practice a branch build passes exactly the
+version that branch declares -- `v2.0.0` on `v2.0-cyanoptera`. The wheel then reports that version rather than anything derivable
 from the ref, so pass `expected_wheel_version: *` to skip the exact-version
 assertion. The smoke test still requires the wheel to install,
 import and answer a query under Pyodide.
