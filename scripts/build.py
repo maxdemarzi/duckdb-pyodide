@@ -71,7 +71,22 @@ def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str,
         # matching DuckDB core version.
         "DUCKDB_CUSTOM_PLATFORM": platform_tag,
         "CMAKE_ARGS": f"-DDUCKDB_EXPLICIT_PLATFORM={platform_tag}",
-        "CFLAGS": "-fwasm-exceptions",
+        # -include cstdio: nanobind 3.x's nb_types.h calls fprintf(stderr, ...)
+        # in two places (the "Critical nanobind error: sequence builder misuse"
+        # path) without including <cstdio>. Every platform where this builds
+        # gets `stderr` transitively from some other header; this toolchain's
+        # libc++ does not, so the compile fails with
+        #
+        #   nanobind/nb_types.h:1323:13: error: use of undeclared identifier 'stderr'
+        #
+        # It is nanobind's bug, not duckdb-python's, and not avoidable by
+        # choosing a version: 3.0.0, 3.0.1 and 3.1.0 all have the two fprintf
+        # sites and none includes <cstdio>, while duckdb-python asks for
+        # `nanobind>=3.0` with no upper bound. Forcing the include in is a
+        # declaration-only change -- it cannot alter behaviour -- and is far
+        # less fragile than patching a build-time dependency's header in
+        # site-packages.
+        "CFLAGS": "-fwasm-exceptions -include cstdio",
         # --allow-multiple-definition: DuckDB embeds every third-party object
         # library (zstd, yyjson, fsst, re2, miniz, utf8proc, hyperloglog,
         # fastpforlib, skiplistlib, mbedtls, fmt) INTO libduckdb_static.a via
