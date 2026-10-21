@@ -45,6 +45,37 @@ NANOBIND_DOUBLE_LINK = (
     "                                                     duckdb_target)"
 )
 
+# duckdb-python v2.0.0 stopped naming the library literally: it picks
+# `nanobind-static-abi3` or `nanobind-static` into DUCKDB_PY_NANOBIND (the
+# stable-ABI build that the 2.0.0 wheels on PyPI use) and links the VARIABLE.
+# Same double link, same whole-archive failure, so the patch is the same shape
+# with the variable kept intact -- which also means it keeps working whichever
+# branch the abi3 condition takes under Pyodide. Validated against the branch
+# tip on 2026-10-13, where the literal form was still in place; the v2.0.0 tag
+# is where it changed, and this script REFUSED rather than guessing, which is
+# how the change was noticed at all.
+NANOBIND_DOUBLE_LINK_ABI3 = (
+    "target_link_libraries(_duckdb_dependencies INTERFACE ${DUCKDB_PY_NANOBIND}\n"
+    "                                                     duckdb_target)"
+)
+
+NANOBIND_SINGLE_LINK_ABI3 = """if(EMSCRIPTEN)
+  # patched by duckdb-pyodide: link the nanobind library once
+  # (nanobind_add_module already does), but keep propagating its
+  # headers/definitions. DUCKDB_PY_NANOBIND is whichever of
+  # nanobind-static-abi3 / nanobind-static this configure selected.
+  target_link_libraries(_duckdb_dependencies INTERFACE duckdb_target)
+  target_include_directories(
+    _duckdb_dependencies
+    INTERFACE $<TARGET_PROPERTY:${DUCKDB_PY_NANOBIND},INTERFACE_INCLUDE_DIRECTORIES>)
+  target_compile_definitions(
+    _duckdb_dependencies
+    INTERFACE $<TARGET_PROPERTY:${DUCKDB_PY_NANOBIND},INTERFACE_COMPILE_DEFINITIONS>)
+else()
+  target_link_libraries(_duckdb_dependencies INTERFACE ${DUCKDB_PY_NANOBIND}
+                                                       duckdb_target)
+endif()"""
+
 NANOBIND_SINGLE_LINK = """if(EMSCRIPTEN)
   # patched by duckdb-pyodide: link nanobind-static once (nanobind_add_module
   # already does), but keep propagating its headers/definitions.
@@ -104,12 +135,16 @@ def patch_nanobind_double_link(cmake_path: pathlib.Path) -> None:
     if "patched by duckdb-pyodide" in original:
         print(f"{cmake_path}: nanobind link already patched -- nothing to do.")
         return
-    if NANOBIND_DOUBLE_LINK in original:
-        cmake_path.write_text(original.replace(NANOBIND_DOUBLE_LINK, NANOBIND_SINGLE_LINK, 1))
-        print(f"Patched {cmake_path}: link nanobind-static once under Emscripten "
-              "(nanobind_add_module already links it; --exports=whole_archive turns "
-              "the second mention into duplicate-symbol link errors).")
-        return
+    for double, single, what in (
+        (NANOBIND_DOUBLE_LINK, NANOBIND_SINGLE_LINK, "nanobind-static"),
+        (NANOBIND_DOUBLE_LINK_ABI3, NANOBIND_SINGLE_LINK_ABI3, "${DUCKDB_PY_NANOBIND}"),
+    ):
+        if double in original:
+            cmake_path.write_text(original.replace(double, single, 1))
+            print(f"Patched {cmake_path}: link {what} once under Emscripten "
+                  "(nanobind_add_module already links it; --exports=whole_archive turns "
+                  "the second mention into duplicate-symbol link errors).")
+            return
     if "nanobind-static" not in original:
         print(f"{cmake_path}: no nanobind-static link found -- nothing to patch.")
         return
