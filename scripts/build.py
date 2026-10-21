@@ -71,7 +71,7 @@ def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str,
         # matching DuckDB core version.
         "DUCKDB_CUSTOM_PLATFORM": platform_tag,
         "CMAKE_ARGS": f"-DDUCKDB_EXPLICIT_PLATFORM={platform_tag}",
-        # -include cstdio: nanobind 3.x's nb_types.h calls fprintf(stderr, ...)
+        # -include stdio.h: nanobind 3.x's nb_types.h calls fprintf(stderr, ...)
         # in two places (the "Critical nanobind error: sequence builder misuse"
         # path) without including <cstdio>. Every platform where this builds
         # gets `stderr` transitively from some other header; this toolchain's
@@ -86,7 +86,15 @@ def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str,
         # declaration-only change -- it cannot alter behaviour -- and is far
         # less fragile than patching a build-time dependency's header in
         # site-packages.
-        "CFLAGS": "-fwasm-exceptions -include cstdio",
+        #
+        # stdio.h and NOT cstdio, which was tried first and broke the build in
+        # a way worth remembering: CFLAGS reaches C compiles too, `cstdio` is a
+        # C++ header, so every CMake probe that compiles a C snippet failed --
+        # surfacing as "Could NOT find Threads (missing: Threads_FOUND)" from
+        # duckdb's find_package, nowhere near the flag. stdio.h is valid in
+        # both languages and declares ::stderr/::fprintf for the unqualified
+        # calls nanobind makes (verified both ways with cc and c++).
+        "CFLAGS": "-fwasm-exceptions -include stdio.h",
         # --allow-multiple-definition: DuckDB embeds every third-party object
         # library (zstd, yyjson, fsst, re2, miniz, utf8proc, hyperloglog,
         # fastpforlib, skiplistlib, mbedtls, fmt) INTO libduckdb_static.a via
