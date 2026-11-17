@@ -59,6 +59,7 @@ def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str,
     checkout = checkout_duckdb_python(duckdb_version)
 
     run([sys.executable, str(pathlib.Path(__file__).parent / "patch_cmake.py")], cwd=checkout)
+    run([sys.executable, str(pathlib.Path(__file__).parent / "patch_duckdb_source.py")], cwd=checkout)
 
     env = os.environ.copy()
     env.update({
@@ -112,14 +113,7 @@ def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str,
         # taking the first is not a choice between rival implementations.
         # Stripping the redundant archives instead would mean patching ~11 of
         # them and re-patching whenever that list changes upstream.
-        # -Bsymbolic: EXPERIMENT. Without it every call from _duckdb to a function the
-        # same module defines is an `env` import, and Emscripten cannot bind a
-        # module's own exports at instantiate time, so each one is a JS closure
-        # (rest-args forwarding, i64<->BigInt). 64,023 of the 64,535 function
-        # imports in the v2.0.0 wheel are of this kind, and DuckDB 2.0's PEG parser
-        # makes many tiny calls: parse-only of a 60-column CASE is 4.6 ms on 1.5.4
-        # and 96.9 ms on 2.0.0. This asks wasm-ld to bind them directly.
-        "LDFLAGS": "-fwasm-exceptions -Wl,--allow-multiple-definition -Wl,-Bsymbolic",
+        "LDFLAGS": "-fwasm-exceptions -Wl,--allow-multiple-definition",
         "DEFAULT_CROSS_BUILD_ENV_URL": xbuildenv_url,
         # patch_cmake.py's edit (when it makes one) dirties the working tree,
         # which defeats setuptools_scm's normal tag-based version detection
