@@ -29,8 +29,22 @@ also reached from D_ASSERT/Verify and any later size() call on the chunk:
 Every edit asserts the exact text it replaces and fails the build if it is not
 there, rather than silently shipping an unpatched wheel. If a later DuckDB fixes
 this upstream, the assertion trips and this step should be deleted.
+
+THE TINY HELPERS CLANG DID NOT INLINE
+-------------------------------------
+In the wasm build, a call from a side module to a weak (linkonce_odr) function
+that was not inlined is an `env` import, and Emscripten cannot bind a module's
+own exports at instantiate time: each such call is a JS closure with rest-args
+forwarding and i64<->BigInt conversion (Builtins_CallForwardVarargs,
+I64ToBigInt). 64,023 of the 64,535 function imports in the v2.0.0 wheel are
+functions the same module exports. DuckDB 2.0's hot paths call several one-line
+helpers that stayed out of line: MurmurHash32/64 (distinct and any hash
+aggregate), vector<T>::get/back/AssertIndexInBounds and unique_ptr/optional_ptr
+accessors (the PEG parser: parse-only of a 60-column CASE goes 4.6 -> 97 ms).
+`__attribute__((always_inline))` on exactly those helpers removes the call.
 """
 import pathlib
+import re
 import sys
 
 SRC = pathlib.Path("external/duckdb/src")
@@ -49,6 +63,55 @@ def replace_once(path: pathlib.Path, old: str, new: str, what: str) -> None:
     print(f"Patched {path}: {what}.")
 
 
+INLINE = "__attribute__((always_inline)) "
+
+
+def force_inline(path: pathlib.Path, needles: list, what: str) -> None:
+    """Prefix each declaration in `needles` (exact text, each expected at least
+    once) with always_inline. Idempotent, and fails loudly on a missing needle."""
+    text = path.read_text()
+    for needle in needles:
+        if INLINE + needle in text:
+            continue
+        n = text.count(needle)
+        if n < 1:
+            sys.exit(f"ERROR: {path}: declaration for '{what}' not found: {needle!r}. "
+                     "DuckDB changed; refusing to guess.")
+        text = text.replace(needle, INLINE + needle)
+    path.write_text(text)
+    print(f"Patched {path}: always_inline on {what}.")
+
+
+def force_inline_hot_helpers() -> None:
+    inc = SRC / "include/duckdb/common"
+    force_inline(inc / "types/hash.hpp",
+                 ["inline hash_t MurmurHash64(", "inline hash_t MurmurHash32(", "inline hash_t CombineHash("],
+                 "MurmurHash32/64 and CombineHash")
+    force_inline(inc / "vector.hpp",
+                 ["static inline void AssertIndexInBounds(",
+                  "\tinline typename original::reference get(",
+                  "\tinline typename original::const_reference get(",
+                  "\ttypename original::reference operator[](",
+                  "\ttypename original::const_reference operator[](",
+                  "\ttypename original::reference front()",
+                  "\ttypename original::const_reference front() const",
+                  "\ttypename original::reference back()",
+                  "\ttypename original::const_reference back() const"],
+                 "vector<T>::get/operator[]/front/back/AssertIndexInBounds")
+    force_inline(inc / "unique_ptr.hpp",
+                 ["static inline void AssertNotNull(",
+                  "\ttypename std::add_lvalue_reference<DATA_TYPE>::type operator*() const",
+                  "\ttypename original::pointer operator->() const"],
+                 "unique_ptr accessors")
+    force_inline(inc / "optional_ptr.hpp",
+                 ["\tvoid CheckValid() const {", "\tT &operator*() {", "\tconst T &operator*() const {",
+                  "\tT *operator->() {", "\tconst T *operator->() const {"],
+                 "optional_ptr accessors")
+    force_inline(inc / "optional_idx.hpp",
+                 ["\tbool IsValid() const {", "\tidx_t GetIndex() const {"],
+                 "optional_idx accessors")
+
+
 def main() -> None:
     replace_once(
         SRC / "execution/operator/aggregate/physical_perfecthash_aggregate.cpp",
@@ -65,6 +128,7 @@ def main() -> None:
         "\tfor (idx_t i = 0; i < groups_count; i++) {\n\t\tconst auto group = address_data[i];",
         "read groups.size() once before the per-row loop instead of once per row",
     )
+    force_inline_hot_helpers()
 
 
 if __name__ == "__main__":
