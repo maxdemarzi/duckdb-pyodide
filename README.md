@@ -37,6 +37,31 @@ python scripts/build.py \
   --platform-tag wasm_eh_pyodide
 ```
 
+## Source patches (`scripts/patch_duckdb_source.py`)
+
+The v2.0.0 wheel built straight from upstream is much slower under wasm than v1.5.4 was.
+`patch_duckdb_source.py` runs after `patch_cmake.py` and patches DuckDB's own sources in
+the checkout. Every edit asserts the exact text it replaces and fails the build if it is
+not there, so a patch that no longer applies (because upstream fixed it) stops the build
+instead of silently shipping an unpatched wheel.
+
+1. **Perfect-hash aggregate.** v1.5.4 called `SetCardinality` on the group and
+   aggregate-input chunks; v2.0.0 dropped it, so `PerfectAggregateHashTable::AddChunk`
+   re-derived the chunk size once per row (`DataChunk::DeriveSize()`, out of line). Under
+   wasm that is a fixed ~90 ns/row.
+2. **Tiny helpers left out of line.** Under Emscripten's dynamic linking a call to a
+   weak function that was not inlined is an `env` import bound through a JS closure
+   (rest-args forwarding, i64<->BigInt). `MurmurHash32/64`, `vector<T>::get/back/[]`, and
+   the `unique_ptr`/`optional_ptr`/`optional_idx` accessors are marked `always_inline`.
+
+Measured on 3M rows under Pyodide 314.0.3 (1.5.4 / stock 2.0.0 / patched):
+low-cardinality GROUP BY 53 / 276 / 46 ms, `count(distinct)` 206 / 341 / 56 ms,
+parse-only of a 60-column CASE 4.6 / 97 / 33 ms.
+
+Releases built with these patches carry a `-perfN` suffix on the tag
+(`duckdb-v2.0.0-pyodide-314.0.3-perf1`); the unsuffixed tag is the unpatched wheel and is
+left alone.
+
 ### Trial builds (`dry_run`)
 
 `build.yml` takes a `dry_run` input. With it set, the wheel is built,
