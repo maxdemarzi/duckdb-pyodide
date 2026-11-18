@@ -59,7 +59,8 @@ def build(duckdb_version: str, xbuildenv_url: str, platform_tag: str,
     checkout = checkout_duckdb_python(duckdb_version)
 
     run([sys.executable, str(pathlib.Path(__file__).parent / "patch_cmake.py")], cwd=checkout)
-    run([sys.executable, str(pathlib.Path(__file__).parent / "patch_duckdb_source.py")], cwd=checkout)
+    run([sys.executable, str(pathlib.Path(__file__).parent / "patch_duckdb_source.py"),
+         version_override or duckdb_version], cwd=checkout)
 
     env = os.environ.copy()
     env.update({

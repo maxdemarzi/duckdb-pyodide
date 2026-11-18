@@ -47,6 +47,11 @@ import pathlib
 import re
 import sys
 
+# The regressions below exist in DuckDB 2.0.x only. 1.5.x never had them, so its text
+# does not contain what these edits assert, and failing the build there would be
+# wrong: the loud failure is for "2.0.x changed", not for "this is a different line".
+AFFECTED = re.compile(r"^v2\.0\.")
+
 SRC = pathlib.Path("external/duckdb/src")
 
 
@@ -113,6 +118,11 @@ def force_inline_hot_helpers() -> None:
 
 
 def main() -> None:
+    version = sys.argv[1] if len(sys.argv) > 1 else ""
+    if not AFFECTED.match(version):
+        print(f"No source patches for DuckDB {version or '(version not given)'}; "
+              "they apply to v2.0.x only -- nothing to do.")
+        return
     replace_once(
         SRC / "execution/operator/aggregate/physical_perfecthash_aggregate.cpp",
         "\tgroup_chunk.Verify(context.client.db);\n\taggregate_input_chunk.Verify(context.client.db);\n",
