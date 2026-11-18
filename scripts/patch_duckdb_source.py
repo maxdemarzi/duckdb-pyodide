@@ -47,10 +47,12 @@ import pathlib
 import re
 import sys
 
-# The regressions below exist in DuckDB 2.0.x only. 1.5.x never had them, so its text
-# does not contain what these edits assert, and failing the build there would be
-# wrong: the loud failure is for "2.0.x changed", not for "this is a different line".
-AFFECTED = re.compile(r"^v2\.0\.")
+# Every DuckDB 2.x build is patched, or fails loudly. The regressions below were
+# introduced in 2.0.0, and this project does not build 1.x. A 2.x release that fixes
+# one upstream makes that edit's assertion trip, which is the signal to delete the
+# edit; silently skipping a later 2.x (as a "2.0.x only" gate would) would ship a slow
+# wheel with no warning if the regression were still there.
+AFFECTED = re.compile(r"^v2\.")
 
 SRC = pathlib.Path("external/duckdb/src")
 
@@ -121,7 +123,7 @@ def main() -> None:
     version = sys.argv[1] if len(sys.argv) > 1 else ""
     if not AFFECTED.match(version):
         print(f"No source patches for DuckDB {version or '(version not given)'}; "
-              "they apply to v2.0.x only -- nothing to do.")
+              "they apply to v2.x only -- nothing to do.")
         return
     replace_once(
         SRC / "execution/operator/aggregate/physical_perfecthash_aggregate.cpp",
